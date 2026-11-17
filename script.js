@@ -1,0 +1,205 @@
+const { useState, useRef, useCallback } = React;
+const rad = d => d * Math.PI / 180;
+const deg = r => r * 180 / Math.PI;
+const norm = d => ((d % 360) + 360) % 360;
+const f = (x, n = 3) => (Math.abs(x) < 5e-4 ? 0 : x).toFixed(n).replace('-', '−');
+
+/* Перетаскивание: переводит координаты указателя в координаты SVG */
+function useDrag(svgRef, onMove) {
+  return useCallback(e => {
+    const svg = svgRef.current;
+    const pt = svg.createSVGPoint();
+    const move = ev => {
+      pt.x = ev.clientX; pt.y = ev.clientY;
+      const p = pt.matrixTransform(svg.getScreenCTM().inverse());
+      onMove(p.x, p.y);
+    };
+    e.preventDefault(); move(e);
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', () => window.removeEventListener('pointermove', move), { once: true });
+  }, [onMove]);
+}
+
+/* ---------- Инструмент: тригонометрический круг ---------- */
+function UnitCircle({ st }) {
+  const { theta, setTheta, snap } = st;
+  const ref = useRef();
+  const C = 220, R = 160;
+  const drag = useDrag(ref, (x, y) => {
+    let a = norm(deg(Math.atan2(C - y, x - C)));
+    if (snap) a = Math.round(a / 15) * 15 % 360;
+    setTheta(a);
+  });
+  const t = rad(theta), px = C + R * Math.cos(t), py = C - R * Math.sin(t);
+  const tanY = C - R * Math.tan(t);
+  const tanOk = Math.abs(Math.tan(t)) < 2.2;
+  const arc = `M${C + 36},${C} A36,36 0 ${theta > 180 ? 1 : 0} 0 ${C + 36 * Math.cos(t)},${C - 36 * Math.sin(t)}`;
+  return (
+    <svg ref={ref} viewBox="0 0 440 440" role="img" aria-label="Тригонометрический круг">
+      {[...Array(9)].map((_, i) => <g key={i}>
+        <line x1={20 + i * 50} y1="20" x2={20 + i * 50} y2="420" stroke="var(--grid)" />
+        <line x1="20" y1={20 + i * 50} x2="420" y2={20 + i * 50} stroke="var(--grid)" />
+      </g>)}
+      <line x1="20" y1={C} x2="420" y2={C} stroke="var(--soft)" />
+      <line x1={C} y1="20" x2={C} y2="420" stroke="var(--soft)" />
+      <circle cx={C} cy={C} r={R} fill="none" stroke="var(--ink)" strokeWidth="1.5" />
+      {[0, 30, 45, 60, 90, 120, 135, 150, 180, 210, 225, 240, 270, 300, 315, 330].map(a => {
+        const x = C + R * Math.cos(rad(a)), y = C - R * Math.sin(rad(a));
+        return <g key={a}><circle cx={x} cy={y} r="2.5" fill="var(--soft)" />
+          <text x={C + (R + 20) * Math.cos(rad(a))} y={C - (R + 20) * Math.sin(rad(a)) + 4} fontSize="10" textAnchor="middle" fill="var(--soft)">{a}°</text></g>;
+      })}
+      {tanOk && <>
+        <line x1={C + R} y1={C} x2={C + R} y2={tanY} stroke="var(--tan)" strokeWidth="3" />
+        <line x1={C} y1={C} x2={C + R} y2={tanY} stroke="var(--tan)" strokeDasharray="3 3" />
+      </>}
+      <line x1={C} y1={C} x2={px} y2={C} stroke="var(--cos)" strokeWidth="3" />
+      <line x1={px} y1={C} x2={px} y2={py} stroke="var(--sin)" strokeWidth="3" />
+      <line x1={C} y1={C} x2={px} y2={py} stroke="var(--acc)" strokeWidth="2" />
+      <path d={arc} fill="none" stroke="var(--acc)" strokeWidth="2" />
+      <circle className="handle" onPointerDown={drag} cx={px} cy={py} r="9" fill="var(--acc)" stroke="var(--panel)" strokeWidth="3" tabIndex="0"
+        onKeyDown={e => { if (e.key === 'ArrowLeft') setTheta(norm(theta + 1)); if (e.key === 'ArrowRight') setTheta(norm(theta - 1)); }} />
+    </svg>
+  );
+}
+
+/* ---------- Инструмент: транспортир ---------- */
+function Protractor({ st }) {
+  const ref = useRef();
+  const [a, setA] = useState(30), [b, setB] = useState(120);
+  const C = { x: 220, y: 300 }, R = 190;
+  const angleAt = (x, y) => {
+    const raw = deg(Math.atan2(C.y - y, x - C.x));
+    if (raw >= 0) return raw;
+    return raw < -90 ? 180 : 0;
+  };
+  const dragA = useDrag(ref, (x, y) => setA(angleAt(x, y)));
+  const dragB = useDrag(ref, (x, y) => setB(angleAt(x, y)));
+  const pos = (ang, r) => [C.x + r * Math.cos(rad(ang)), C.y - r * Math.sin(rad(ang))];
+  const lo = Math.min(a, b), hi = Math.max(a, b);
+  const [ax, ay] = pos(a, R + 25), [bx, by] = pos(b, R + 25);
+  const [s1x, s1y] = pos(lo, 70), [s2x, s2y] = pos(hi, 70);
+  st.protr.current = hi - lo;
+  return (
+    <svg ref={ref} viewBox="0 0 440 340" role="img" aria-label="Транспортир">
+      <path d={`M${C.x - R},${C.y} A${R},${R} 0 0 1 ${C.x + R},${C.y} Z`} fill="var(--glass)" stroke="var(--glass-edge)" strokeWidth="1.5" />
+      <path d={`M${C.x - 60},${C.y} A60,60 0 0 1 ${C.x + 60},${C.y}`} fill="none" stroke="var(--glass-edge)" strokeOpacity=".5" />
+      {[...Array(181)].map((_, i) => {
+        const len = i % 10 === 0 ? 18 : i % 5 === 0 ? 12 : 6;
+        const [x1, y1] = pos(i, R), [x2, y2] = pos(i, R - len);
+        return <line key={i} x1={x1} y1={y1} x2={x2} y2={y2} stroke="var(--glass-edge)" strokeWidth={i % 10 === 0 ? 1.3 : .8} />;
+      })}
+      {[...Array(19)].map((_, i) => {
+        const [x, y] = pos(i * 10, R - 30);
+        return <text key={i} x={x} y={y + 3} fontSize="9" textAnchor="middle" fill="var(--ink)">{i * 10}</text>;
+      })}
+      <line x1={C.x - R - 10} y1={C.y} x2={C.x + R + 10} y2={C.y} stroke="var(--soft)" />
+      <path d={`M${C.x},${C.y} L${s1x},${s1y} A70,70 0 0 0 ${s2x},${s2y} Z`} fill="var(--acc)" fillOpacity=".2" />
+      <line x1={C.x} y1={C.y} x2={ax} y2={ay} stroke="var(--sin)" strokeWidth="2.5" />
+      <line x1={C.x} y1={C.y} x2={bx} y2={by} stroke="var(--acc)" strokeWidth="2.5" />
+      <circle cx={C.x} cy={C.y} r="4" fill="var(--ink)" />
+      <circle className="handle" onPointerDown={dragA} cx={ax} cy={ay} r="9" fill="var(--sin)" stroke="var(--panel)" strokeWidth="3" />
+      <circle className="handle" onPointerDown={dragB} cx={bx} cy={by} r="9" fill="var(--acc)" stroke="var(--panel)" strokeWidth="3" />
+      <text x={C.x} y={C.y + 28} textAnchor="middle" fontSize="16" fontWeight="700" fill="var(--ink)">{f(hi - lo, 1)}°</text>
+    </svg>
+  );
+}
+
+/* ---------- Инструмент: графики sin / cos ---------- */
+function Graph({ st }) {
+  const { theta, setTheta, snap } = st;
+  const ref = useRef();
+  const W = 640, H = 300, L = 30, w = W - 2 * L, cy = H / 2, k = 105;
+  const X = d => L + (d / 360) * w;
+  const curve = fn => [...Array(361)].map((_, d) => `${d ? 'L' : 'M'}${X(d)},${cy - k * fn(rad(d))}`).join('');
+  const drag = useDrag(ref, x => {
+    let a = Math.min(360, Math.max(0, ((x - L) / w) * 360));
+    setTheta(snap ? Math.round(a / 15) * 15 % 360 : a);
+  });
+  return (
+    <svg ref={ref} viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Графики синуса и косинуса" onPointerDown={drag}>
+      {[0, 90, 180, 270, 360].map(d => <g key={d}>
+        <line x1={X(d)} y1="15" x2={X(d)} y2={H - 25} stroke="var(--grid)" />
+        <text x={X(d)} y={H - 8} fontSize="11" textAnchor="middle" fill="var(--soft)">{d}°</text></g>)}
+      <line x1={L} y1={cy} x2={W - L} y2={cy} stroke="var(--soft)" />
+      {[1, -1].map(v => <line key={v} x1={L} y1={cy - k * v} x2={W - L} y2={cy - k * v} stroke="var(--grid)" strokeDasharray="4 4" />)}
+      <path d={curve(Math.sin)} fill="none" stroke="var(--sin)" strokeWidth="2.5" />
+      <path d={curve(Math.cos)} fill="none" stroke="var(--cos)" strokeWidth="2.5" />
+      <line x1={X(theta)} y1="15" x2={X(theta)} y2={H - 25} stroke="var(--acc)" strokeWidth="1.5" />
+      <circle cx={X(theta)} cy={cy - k * Math.sin(rad(theta))} r="6" fill="var(--sin)" />
+      <circle cx={X(theta)} cy={cy - k * Math.cos(rad(theta))} r="6" fill="var(--cos)" />
+      <text x={W - L - 4} y="28" textAnchor="end" fontSize="12" fill="var(--sin)">sin</text>
+      <text x={W - L - 4} y="44" textAnchor="end" fontSize="12" fill="var(--cos)">cos</text>
+    </svg>
+  );
+}
+
+/* ---------- Панель свойств ---------- */
+function Props({ tool, st }) {
+  const { theta, setTheta, unit, setUnit, snap, setSnap } = st;
+  const t = rad(theta), tan = Math.tan(t);
+  const shown = unit === 'deg' ? theta : t;
+  return <>
+    {tool.id === 'protractor' ? <>
+      <h2>Измерение</h2>
+      <div className="row"><span>Угол между лучами</span><b>{f(st.protr.current, 1)}°</b></div>
+      <div className="row"><span>В радианах</span><b>{f(rad(st.protr.current))}</b></div>
+      <p style={{ color: 'var(--soft)', fontSize: 13 }}>Тяните цветные точки на концах лучей.</p>
+    </> : <>
+      <h2>Угол</h2>
+      <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
+        <input type="number" step={unit === 'deg' ? 1 : .01} value={+shown.toFixed(3)}
+          onChange={e => setTheta(norm(unit === 'deg' ? +e.target.value : deg(+e.target.value)))} aria-label="Значение угла" />
+        <button className="btn" aria-pressed={unit === 'deg'} onClick={() => setUnit('deg')}>°</button>
+        <button className="btn" aria-pressed={unit === 'rad'} onClick={() => setUnit('rad')}>рад</button>
+      </div>
+      <label className="chk"><input type="checkbox" checked={snap} onChange={e => setSnap(e.target.checked)} /> Шаг 15°</label>
+      <h2>Значения</h2>
+      <div className="row"><span style={{ color: 'var(--sin)' }}>sin θ</span><b>{f(Math.sin(t))}</b></div>
+      <div className="row"><span style={{ color: 'var(--cos)' }}>cos θ</span><b>{f(Math.cos(t))}</b></div>
+      <div className="row"><span style={{ color: 'var(--tan)' }}>tg θ</span><b>{Math.abs(tan) > 1e6 ? '∞' : f(tan)}</b></div>
+      <h2>Быстрый выбор</h2>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+        {[0, 30, 45, 60, 90, 180, 270].map(a => <button key={a} className="btn" onClick={() => setTheta(a)}>{a}°</button>)}
+      </div>
+    </>}
+  </>;
+}
+
+/* ---------- Реестр инструментов ---------- */
+const TOOLS = [
+  { id: 'circle', name: 'Тригонометрический круг', hint: 'sin, cos, tg', Comp: UnitCircle },
+  { id: 'protractor', name: 'Транспортир', hint: 'измерение углов', Comp: Protractor },
+  { id: 'graph', name: 'Графики sin и cos', hint: 'связаны с кругом', Comp: Graph },
+];
+
+function App() {
+  const [toolId, setToolId] = useState('circle');
+  const [theta, setTheta] = useState(40);
+  const [unit, setUnit] = useState('deg');
+  const [snap, setSnap] = useState(false);
+  const [theme, setTheme] = useState(null);
+  const protr = useRef(90);
+  const st = { theta, setTheta, unit, setUnit, snap, setSnap, protr };
+  const tool = TOOLS.find(t => t.id === toolId);
+  const toggleTheme = () => {
+    const dark = theme ? theme === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
+    const next = dark ? 'light' : 'dark';
+    setTheme(next); document.documentElement.dataset.theme = next;
+  };
+  return (
+    <div className="app">
+      <header className="top">
+        <h1>Math Workbench</h1>
+        <button className="btn" onClick={toggleTheme}>Тема</button>
+      </header>
+      <nav className="side" aria-label="Инструменты">
+        {TOOLS.map(t => <button key={t.id} className="tool" aria-current={t.id === toolId} onClick={() => setToolId(t.id)}>
+          {t.name}<small>{t.hint}</small></button>)}
+      </nav>
+      <main className="stage"><tool.Comp st={st} /></main>
+      <aside className="props" aria-label="Свойства"><Props tool={tool} st={st} /></aside>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
